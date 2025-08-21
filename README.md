@@ -16,7 +16,7 @@ WebMaxLib is a Python library for interacting with the Max messaging service via
 1. Clone the repository:
    ```bash
    git clone https://github.com/xNoBanOnlyZXC/WebMaxLib.git
-   cd maxclient
+   cd WebMaxLib
    ```
 
 2. Install dependencies:
