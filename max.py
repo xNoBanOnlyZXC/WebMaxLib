@@ -41,6 +41,7 @@ class MaxClient:
         self._t_stop = False
 
         self.is_log_in = False
+        self.me = None
 
         self.handlers = []
 
@@ -55,6 +56,11 @@ class MaxClient:
     # region cid
     def cid(self):
         return int(time.time() * 1000)
+    
+    # region marker
+    @property
+    def marker(self):
+        return int("900"+str(int(time.time())))
 
     # region _generate_user_agent()
     def _generate_user_agent(self) -> str:
@@ -121,7 +127,7 @@ class MaxClient:
         }))
 
         p = json.loads(self.websocket.recv())['payload']
-        usr = User(p['profile'])
+        usr = User(self, p['profile'])
         self.me = usr
         self._connected = True
 
@@ -183,8 +189,10 @@ class MaxClient:
         while not self._t_stop:
             try:
                 recv = json.loads(self.websocket.recv())
-            except:
+            except Exception as e:
+                print(e)
                 exit(0)
+                raise
             opcode = recv["opcode"]
             payload = recv["payload"]
             
@@ -207,7 +215,7 @@ class MaxClient:
                 case _:
                     pass
 
-            # print(recv)
+            print(json.dumps(recv, ensure_ascii=False, indent=4))
         self._t_stop = False
 
     # region run()
@@ -343,7 +351,7 @@ class MaxClient:
                 continue
 
         self.auth_token = payload['tokenAttrs']['LOGIN']['token']
-        usr = User(payload['profile'])
+        usr = User(self, payload['profile'])
         self.me = usr
         return self.me
 
@@ -478,6 +486,7 @@ class MaxClient:
             }
         }))
 
+    # region edit_message()
     def edit_message(self, chat_id: int, message_id: str|int, text: str):
         """
         Edits the text of an existing message in a specified chat.
@@ -528,6 +537,108 @@ class MaxClient:
         
         return msg
     
+    # region pin_chat()
+    def pin_chat(self, chat_id: int|str):
+        j = {
+            "ver": 11,
+            "cmd": 0,
+            "seq": self.seq,
+            "opcode": 22,
+            "payload": {
+                "settings": {
+                    "chats": {
+                        str(chat_id): {
+                            "favIndex": int(time.time()*1000)
+                        }
+                    }
+                }
+            }
+        }
+        self.websocket.send(json.dumps(j))
+        return True
+
+    # region unpin_chat()
+    def unpin_chat(self, chat_id: int|str):
+        j = {
+            "ver": 11,
+            "cmd": 0,
+            "seq": self.seq,
+            "opcode": 22,
+            "payload": {
+                "settings": {
+                    "chats": {
+                        str(chat_id): {
+                            "favIndex": 0
+                        }
+                    }
+                }
+            }
+        }
+        self.websocket.send(json.dumps(j))
+        return True
+    
+    # region get_user()
+    def get_user(self, **kwargs):
+        """
+        Retrieves a user's profile by their ID or phone number.
+
+        Args:
+            - id (int, optional) : The contact ID of the user to retrieve.
+            - phone (str, optional) : The phone number of the user to retrieve.
+            - chat_id (int, optional) : The chat ID with the user to retrieve.
+
+        Returns:
+            User: A `User` object representing the retrieved user's profile.
+
+        Raises:
+            ValueError: If neither `id` nor `phone` is provided, or if the client is not connected or authenticated.
+            WebSocketError: If there is an issue with the WebSocket communication.
+
+        Usage:
+            ```python
+            # Get user by ID
+            user = client.get_user(id="123456")
+            print(user.contact.names[0].name)  # Prints the user's full name
+
+            # Get user by phone number
+            user = client.get_user(phone="+7xxxxxxxxxx")
+            print(user.contact.phone)  # Prints the user's phone number
+        """
+        id = kwargs.get('id')
+        phone = kwargs.get('phone')
+        chat_id = kwargs.get('chat_id')
+        _f = kwargs.get("_f")
+        seq = self.seq
+
+        if id:
+            j = {"ver":11,"cmd":0,"seq":seq,"opcode":32,"payload":{"contactIds":[id]}}
+        elif phone:
+            j = {"ver":11,"cmd":0,"seq":seq,"opcode":46,"payload":{"phone":str(phone)}}
+        elif chat_id:
+            id = self.me.contact.id ^ chat_id
+            j = {"ver":11,"cmd":0,"seq":seq,"opcode":32,"payload":{"contactIds":[id]}}
+        else:
+            raise ValueError("no `id` or `phone` provided")
+        
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+
+        payload = recv["payload"]
+
+        if id:
+            contact = payload["contacts"][0]
+        if phone:
+            payload["contact"]["phone"] = phone
+            contact = payload["contact"]
+
+        return User(self, contact, _f)
+
     # region session_exit()
     def session_exit(self):
         """Terminates active session token. There no way back."""

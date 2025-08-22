@@ -1,3 +1,5 @@
+import json, time
+
 class Name:
     def __init__(self, name, firstName, lastName, type):
         """
@@ -12,7 +14,7 @@ class Name:
         self.type = type
 
 class Contact:
-    def __init__(self, accountStatus = None, baseUrl = None, names = None, phone = None, description = None, options = None, photoId = None, updateTime = None, id = None, baseRawUrl = None):
+    def __init__(self, accountStatus = None, baseUrl = None, names = None, phone = None, description = None, options = None, photoId = None, updateTime = None, id = None, baseRawUrl = None, gender = None, link = None):
         """
         Represents a contact with detailed profile information.
 
@@ -28,17 +30,23 @@ class Contact:
         self.photo_id = photoId
         self.update_time = updateTime
         self.id = id
+        self.link = link
+        self.gender = gender
         self.base_raw_url = baseRawUrl
 
 class User:
-    def __init__(self, profile):
+    def __init__(self, client, profile, _f=0):
         """
         Represents a user with a contact profile.
 
         This class wraps a `Contact` object created from a profile dictionary, typically
         received from the server.
         """
+        self._client = client
         self.contact = Contact(**profile)
+        _id = client.me.contact.id if client.me else profile["id"]
+        if not _f:
+            self.chat = Chat(self._client, profile["id"] ^ _id)
 
 class Chat:
     def __init__(self, client, chat_id):
@@ -47,12 +55,37 @@ class Chat:
 
         This class associates a chat with a client instance and its unique ID.
         """
+        if chat_id == 0:
+            return
         self._client = client
 
-        self.id= chat_id
+        self.id = chat_id
+        self.link = f"https://web.max.ru/{chat_id}"
+
+        seq = client.seq
+        client.websocket.send(json.dumps({"ver":11,"cmd":0,"seq":seq,"opcode":49,"payload":{"chatId":chat_id,"from":int(time.time()*1000),"forward":0,"backward":30,"getMessages":True}}))
+        while True:
+            r = client.websocket.recv()
+            recv = json.loads(r)
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+        
+        payload = recv["payload"]
+        _ = []
+        for msg in payload["messages"]:
+            m = Message(client, 0, **msg, _f=1)
+            _.append(m)
+        self.messages: list[Message] = _
+
+    def pin(self):
+        self._client.pin_chat(self.id)
+    def unpin(self):
+        self._client.unpin_chat(self.id)
 
 class Message:
-    def __init__(self, client, chatId: str, sender: str, id, time, text, type, **kwargs):
+    def __init__(self, client, chatId: str, sender: str, id, time, text, type, _f=0, **kwargs):
         """
         Represents a message in a chat.
 
@@ -61,7 +94,8 @@ class Message:
         """
         self._client = client
 
-        self.chat = Chat(client, chatId)
+        if not _f:
+            self.chat = Chat(client, chatId)
         self.sender = sender
         self.id = id
         self.time = time
@@ -71,6 +105,8 @@ class Message:
         self.options = kwargs.get("options")
         self.cid = kwargs.get("cid")
         self.attaches = kwargs.get("attaches", [])
+        self.reaction_info = kwargs.get("reactionInfo", {})
+        self.user: User = client.get_user(id=sender, _f=1)
     
     def reply(self, text: str, **kwargs) -> "Message":
         """
