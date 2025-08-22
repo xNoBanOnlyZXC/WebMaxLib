@@ -1,5 +1,18 @@
 import json, time
+from typing import Literal
 
+EMOJIS = Literal[
+    '❤️','👍','🤣','🔥','💯','😍','🎉','⚡',
+    '🤩','🤘','😎','🙄','😐','😁','🤪','😉',
+    '🤤','😇','😘','🥰','🥳','🌚','🌝','😴',
+    '🫠','🤔','🫡','😳','🥱','🐈','🐶','💪',
+    '🤞','👋','👏','🤝','👌','🙏','💋','👑',
+    '⭐','🍷','🍑','🤷‍♀️','🤷‍♂️','👩‍❤️‍👨','🦄','👻',
+    '🗿','👀','👁️','🖤','❤️‍🩹','🛑','⛄','❓',
+    '❗️'
+]
+
+# region Name
 class Name:
     def __init__(self, name, firstName, lastName, type):
         """
@@ -13,14 +26,16 @@ class Name:
         self.last_name = lastName
         self.type = type
 
+# region Contact
 class Contact:
-    def __init__(self, accountStatus = None, baseUrl = None, names = None, phone = None, description = None, options = None, photoId = None, updateTime = None, id = None, baseRawUrl = None, gender = None, link = None):
+    def __init__(self, client, accountStatus = None, baseUrl = None, names = None, phone = None, description = None, options = None, photoId = None, updateTime = None, id = None, baseRawUrl = None, gender = None, link = None):
         """
         Represents a contact with detailed profile information.
 
         This class encapsulates contact details, including status, URLs, names (as `Name` objects),
         phone number, description, and other metadata.
         """
+        self._client = client
         self.accountStatus = accountStatus
         self.base_url = baseUrl
         self.names = [Name(**n) for n in names]
@@ -33,7 +48,24 @@ class Contact:
         self.link = link
         self.gender = gender
         self.base_raw_url = baseRawUrl
+    
+    # region add()
+    def add(self):
+        return self._client.contact_add(self.id)
+    
+    # region remove()
+    def remove(self):
+        return self._client.contact_remove(self.id)
+    
+    # region block()
+    def block(self):
+        return self._client.contact_block(self.id)
+    
+    # region unblock()
+    def unblock(self):
+        return self._client.contact_unblock(self.id)
 
+# region User
 class User:
     def __init__(self, client, profile, _f=0):
         """
@@ -43,11 +75,16 @@ class User:
         received from the server.
         """
         self._client = client
-        self.contact = Contact(**profile)
+        self.contact = Contact(client, **profile)
         _id = client.me.contact.id if client.me else profile["id"]
         if not _f:
             self.chat = Chat(self._client, profile["id"] ^ _id)
 
+        if profile["id"] != _id:
+
+            pass
+
+# region Chat
 class Chat:
     def __init__(self, client, chat_id):
         """
@@ -59,7 +96,7 @@ class Chat:
             return
         self._client = client
 
-        self.id = chat_id
+        self.id: int = chat_id
         self.link = f"https://web.max.ru/{chat_id}"
 
         seq = client.seq
@@ -67,23 +104,33 @@ class Chat:
         while True:
             r = client.websocket.recv()
             recv = json.loads(r)
-            if recv["seq"] != seq:
-                pass
-            else:
+            if recv["seq"] == seq and recv["opcode"] == 49:
                 break
+            else:
+                pass
         
         payload = recv["payload"]
-        _ = []
-        for msg in payload["messages"]:
-            m = Message(client, 0, **msg, _f=1)
-            _.append(m)
-        self.messages: list[Message] = _
+        if not recv["opcode"] in [150]:
+            _ = []
+            for msg in payload["messages"]:
+                m = Message(client, 0, **msg, _f=1)
+                _.append(m)
+            self.messages: list[Message] = _
 
+    # region pin()
     def pin(self):
         self._client.pin_chat(self.id)
+
+    # region unpin()
     def unpin(self):
         self._client.unpin_chat(self.id)
 
+    def clear_history(self): # TODO
+        # seq = self.seq
+        # {"ver":11,"cmd":0,"seq":seq,"opcode":48,"payload":{"chatIds":[chatid]}}
+        pass
+
+# region Message
 class Message:
     def __init__(self, client, chatId: str, sender: str, id, time, text, type, _f=0, **kwargs):
         """
@@ -108,6 +155,7 @@ class Message:
         self.reaction_info = kwargs.get("reactionInfo", {})
         self.user: User = client.get_user(id=sender, _f=1)
     
+    # region reply()
     def reply(self, text: str, **kwargs) -> "Message":
         """
         Replies to the current message in its chat.
@@ -128,6 +176,7 @@ class Message:
         """
         return self._client.send_message(self.chat.id, text, self.id, **kwargs)
     
+    # region answer()
     def answer(self, text: str, **kwargs) -> "Message":
         """
         Sends a new message in the same chat without linking it as a reply.
@@ -148,6 +197,7 @@ class Message:
         """
         return self._client.send_message(self.chat.id, text, **kwargs)
 
+    # region delete()
     def delete(self, for_me = False):
         """
         Deletes the current message from its chat.
@@ -168,6 +218,7 @@ class Message:
         """
         return self._client.delete_message(self.chat.id, [self.id], for_me)
     
+    # region edit()
     def edit(self, text: str) -> "Message":
         """
         Edits the text content of the current message.
@@ -187,3 +238,30 @@ class Message:
             ```
         """
         return self._client.edit_message(self.chat.id, self.id, text)
+    
+    # region react()
+    def react(self, reaction: EMOJIS) -> "Reactions":
+        """
+        Reacts to the current message with a specified emoji.
+
+        Args:
+            reaction (EMOJIS): The emoji reaction to be added, represented by an EMOJIS enum.
+
+        Returns:
+            Reactions: An object containing updated reaction information for the message.
+        """
+        return self._client.set_reaction(self.chat.id, self.id, reaction)
+
+# region Reaction
+class Reaction:
+    def __init__(self, reaction: str, count: int):
+        self.reaction = reaction
+        self.count = count
+
+# region Reactions
+class Reactions:
+    def __init__(self, **kwargs):
+        reaction_info = kwargs.get('reactionInfo', {})
+        self.counters = [Reaction(**c) for c in reaction_info.get('counters', [])]
+        self.your_reaction = reaction_info.get('yourReaction')
+        self.total_count = reaction_info.get('totalCount')

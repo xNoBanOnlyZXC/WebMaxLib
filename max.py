@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from uuid import uuid4
-from classes import Message, User
+from classes import *
 from errors import *
 
 # region class MaxClient
@@ -42,18 +42,19 @@ class MaxClient:
 
         self.is_log_in = False
         self.me = None
+        self.session_id = int(time.time()*1000)
 
         self.handlers = []
 
-    @property
     # region seq
+    @property
     def seq(self):
         current_seq = self._seq
         self._seq += 1
         return current_seq
     
-    @property
     # region cid
+    @property
     def cid(self):
         return int(time.time() * 1000)
     
@@ -74,7 +75,7 @@ class MaxClient:
                     "deviceType": "WEB",
                     "locale": "ru",
                     "osVersion": "Linux",
-                    "deviceName": "Firefox",
+                    "deviceName": "WebMax Lib",
                     "headerUserAgent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0",
                     "deviceLocale": "ru",
                     "appVersion": "4.8.42",
@@ -122,7 +123,7 @@ class MaxClient:
                 "contactsSync": 0,
                 "presenceSync": 0,
                 "draftsSync": 0,
-                "chatsCount": 0
+                "chatsCount": 40
             }
         }))
 
@@ -132,7 +133,6 @@ class MaxClient:
         self._connected = True
 
         if self._on_connect:
-            # self._on_connect(self, self.me)
             self._on_connect()
 
     # region disconnect()
@@ -215,7 +215,7 @@ class MaxClient:
                 case _:
                     pass
 
-            # print(json.dumps(recv, ensure_ascii=False, indent=4))
+            print(json.dumps(recv, ensure_ascii=False, indent=4))
         self._t_stop = False
 
     # region run()
@@ -618,7 +618,7 @@ class MaxClient:
             id = self.me.contact.id ^ chat_id
             j = {"ver":11,"cmd":0,"seq":seq,"opcode":32,"payload":{"contactIds":[id]}}
         else:
-            raise ValueError("no `id` or `phone` provided")
+            raise ValueError("no `id` or `phone` or `chat_id` provided")
         
         self.websocket.send(json.dumps(j))
 
@@ -631,6 +631,11 @@ class MaxClient:
 
         payload = recv["payload"]
 
+        error = payload.get("error")
+
+        if error:
+            raise UserNotFound(error, payload["message"]+f": {phone}")
+
         if id:
             contact = payload["contacts"][0]
         if phone:
@@ -641,12 +646,104 @@ class MaxClient:
 
     # region session_exit()
     def session_exit(self):
-        """Terminates active session token. There no way back."""
+        """Terminates active session token. **There no way back.**"""
         j = {"ver":11,"cmd":0,"seq":self.seq,"opcode":20,"payload":{}}
         self.websocket.send(json.dumps(j))
         self.disconnect()
         return True
+    
+    # region set_reaction()
+    def set_reaction(self, chat_id, message_id, reaction: EMOJIS):
+        """
+        Sets a reaction to a specific message in a chat.
 
+        This function sends a reaction to a message and return a Reactions object.
+
+        Args:
+            chat_id (str): The unique identifier of the chat.
+            message_id (str): The unique identifier of the message.
+            reaction (EMOJIS): The emoji reaction to be set, using the EMOJIS enumeration.
+
+        Returns:
+            Reactions: An object containing information about the updated message reactions,
+                    including counters for each emoji, your own reaction, and the total count.
+        """
+        seq = self.seq
+        j = {"ver":11,"cmd":0,"seq":seq,"opcode":178,"payload":{"chatId":chat_id,"messageId":message_id,"reaction":{"reactionType":"EMOJI","id":reaction}}}
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+
+        payload = recv["payload"] # {"ver":11,"cmd":1,"seq":79,"opcode":178,"payload":{"reactionInfo":{"counters":[{"count":1,"reaction":"â¤ï¸"}],"yourReaction":"â¤ï¸","totalCount":1}}}
+        
+        return Reactions(**payload)
+    
+    # region contact_add()
+    def contact_add(self, user_id: int):
+        seq = self.seq
+        j = {"ver":11, "cmd":0, "seq":seq, "opcode":34, "payload":{"contactId": user_id, "action": "ADD"}}
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+        payload = recv["payload"]
+
+        return User(self, payload["contact"])
+    
+    # region contact_remove()
+    def contact_remove(self, user_id: int):
+        seq = self.seq
+        j = {"ver":11, "cmd":0, "seq":seq, "opcode":34, "payload":{"contactId": user_id, "action": "REMOVE"}}
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+            
+        return True
+    
+    # region contact_block()
+    def contact_block(self, user_id: int):
+        seq = self.seq
+        j = {"ver":11, "cmd":0, "seq":seq, "opcode":34, "payload":{"contactId": user_id, "action": "BLOCK"}}
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+            
+        return True
+    
+    # region contact_unblock()
+    def contact_unblock(self, user_id: int):
+        seq = self.seq
+        j = {"ver":11, "cmd":0, "seq":seq, "opcode":34, "payload":{"contactId": user_id, "action": "UNBLOCK"}}
+        self.websocket.send(json.dumps(j))
+
+        while True:
+            recv = json.loads(self.websocket.recv())
+            if recv["seq"] != seq:
+                pass
+            else:
+                break
+            
+        return True
+                
     # region @on_message()
     def on_message(self, filters):
         """
@@ -697,5 +794,4 @@ class MaxClient:
         ```
         """
         self._on_connect = func
-
         return func
