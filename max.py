@@ -215,7 +215,7 @@ class MaxClient:
                 case _:
                     pass
 
-            print(json.dumps(recv, ensure_ascii=False, indent=4))
+            # print(json.dumps(recv, ensure_ascii=False, indent=4))
         self._t_stop = False
 
     # region run()
@@ -697,4 +697,5 @@ class MaxClient:
         ```
         """
         self._on_connect = func
+
         return func
